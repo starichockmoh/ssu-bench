@@ -1,0 +1,322 @@
+openapi: 3.0.3
+info:
+  title: SsuBench API
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+    RegisterRequest:
+      type: object
+      required: [email, password, role]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        role:
+          type: string
+          enum: [customer, contractor, admin]
+        balance:
+          type: integer
+          minimum: 0
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    CreateTaskRequest:
+      type: object
+      required: [title, description, price]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        price:
+          type: integer
+          minimum: 1
+    CreateBidRequest:
+      type: object
+      properties:
+        comment:
+          type: string
+paths:
+  /auth/register:
+    post:
+      summary: Register user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Created
+  /auth/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '201':
+          description: JWT token
+  /users/me:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Get current user profile
+      responses:
+        '200':
+          description: User profile
+  /users:
+    get:
+      security:
+        - bearerAuth: []
+      summary: List users
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: User list
+  /users/{id}/block:
+    patch:
+      security:
+        - bearerAuth: []
+      summary: Block user
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User blocked
+  /users/{id}/unblock:
+    patch:
+      security:
+        - bearerAuth: []
+      summary: Unblock user
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User unblocked
+  /tasks:
+    get:
+      security:
+        - bearerAuth: []
+      summary: List tasks
+      responses:
+        '200':
+          description: Task list
+    post:
+      security:
+        - bearerAuth: []
+      summary: Create task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created
+  /tasks/{id}:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Get task by id
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task details
+    patch:
+      security:
+        - bearerAuth: []
+      summary: Update draft task
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task updated
+  /tasks/{id}/publish:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Publish task
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Task published
+  /tasks/{id}/cancel:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Cancel task
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Task cancelled
+  /tasks/{id}/complete:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Mark task complete by contractor
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Task marked complete
+  /tasks/{id}/confirm:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Confirm task and execute payment transaction
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Task confirmed
+  /tasks/{id}/bids:
+    get:
+      security:
+        - bearerAuth: []
+      summary: List bids for task
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bid list
+    post:
+      security:
+        - bearerAuth: []
+      summary: Create bid
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBidRequest'
+      responses:
+        '201':
+          description: Bid created
+  /tasks/{taskId}/bids/{bidId}/select:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Select contractor bid
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: bidId
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Bid selected
+  /payments:
+    get:
+      security:
+        - bearerAuth: []
+      summary: List payments
+      responses:
+        '200':
+          description: Payment list
+  /payments/{id}:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Get payment details
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Payment details
