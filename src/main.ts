@@ -19,6 +19,11 @@ async function bootstrap(): Promise<void> {
     }),
   );
   app.useGlobalFilters(new HttpExceptionFilter());
+  app.enableCors({
+    origin: 'http://localhost:8080',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true,
+  });
 
   const server = app.getHttpServer() as {
     keepAliveTimeout?: number;

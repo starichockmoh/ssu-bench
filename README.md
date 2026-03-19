@@ -259,3 +259,22 @@ curl -X GET "$BASE_URL/users" \
 ## OpenAPI
 
 Описание API находится в файле `openapi.yaml`.
+
+Развернуть локально (windows):
+```bash
+docker run -p 8080:8080 `
+  -v "${PWD}/openapi.yaml:/var/specs/openapi.yaml" `
+  -e SWAGGER_JSON=/var/specs/openapi.yaml `
+  swaggerapi/swagger-ui
+
+```
+
+Развернуть локально (Linux):
+```bash
+docker run -p 8080:8080 \
+  -v "$(pwd)/openapi.yaml:/var/specs/openapi.yaml" \
+  -e SWAGGER_JSON=/var/specs/openapi.yaml \
+  swaggerapi/swagger-ui
+```
+
+После чего swagger будет доступен на http://localhost:8080
