@@ -48,6 +48,9 @@ describe('TasksService', () => {
     create: jest.fn(),
     save: jest.fn(),
   };
+  const domainEventsService = {
+    appendEvent: jest.fn(),
+  };
   const dataSource = {
     transaction: jest.fn(),
   };
@@ -62,6 +65,7 @@ describe('TasksService', () => {
       bidsRepository as never,
       usersRepository as never,
       paymentsRepository as never,
+      domainEventsService as never,
       dataSource as never,
     );
   });

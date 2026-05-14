@@ -8,11 +8,13 @@ import { UsersModule } from '../users/users.module';
 import { BidEntity } from '../bids/entities/bid.entity';
 import { PaymentEntity } from '../payments/entities/payment.entity';
 import { BidsModule } from '../bids/bids.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([TaskEntity, BidEntity, PaymentEntity]), // forFeature() создаёт провайдеры репозиториев
     UsersModule,
+    NotificationsModule,
     forwardRef(() => BidsModule), // forwardRef() отложенная ссылка на модуль (без циклов)
   ],
   providers: [TasksRepository, TasksService],

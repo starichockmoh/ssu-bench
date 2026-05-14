@@ -6,12 +6,14 @@ import { BidsService } from './service/bids.service';
 import { BidsController } from './handlers/bids.controller';
 import { TasksModule } from '../tasks/tasks.module';
 import { UsersModule } from '../users/users.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([BidEntity]),
     forwardRef(() => TasksModule),
     UsersModule,
+    NotificationsModule,
   ],
   providers: [BidsRepository, BidsService],
   controllers: [BidsController],

@@ -12,6 +12,12 @@ import { UserEntity } from './modules/users/entities/user.entity';
 import { TaskEntity } from './modules/tasks/entities/task.entity';
 import { BidEntity } from './modules/bids/entities/bid.entity';
 import { PaymentEntity } from './modules/payments/entities/payment.entity';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OutboxEventEntity } from './modules/notifications/entities/outbox-event.entity';
+import { IncomingEventEntity } from './modules/notifications/entities/incoming-event.entity';
+import { NotificationEntity } from './modules/notifications/entities/notification.entity';
+import { NotificationDeliveryAttemptEntity } from './modules/notifications/entities/notification-delivery-attempt.entity';
+import { DlqRecordEntity } from './modules/notifications/entities/dlq-record.entity';
 
 @Module({
   imports: [
@@ -27,7 +33,17 @@ import { PaymentEntity } from './modules/payments/entities/payment.entity';
       username: appConfig.db.username,
       password: appConfig.db.password,
       database: appConfig.db.database,
-      entities: [UserEntity, TaskEntity, BidEntity, PaymentEntity],
+      entities: [
+        UserEntity,
+        TaskEntity,
+        BidEntity,
+        PaymentEntity,
+        OutboxEventEntity,
+        IncomingEventEntity,
+        NotificationEntity,
+        NotificationDeliveryAttemptEntity,
+        DlqRecordEntity,
+      ],
       synchronize: false,
       autoLoadEntities: false,
     }),
@@ -36,6 +52,7 @@ import { PaymentEntity } from './modules/payments/entities/payment.entity';
     TasksModule,
     BidsModule,
     PaymentsModule,
+    NotificationsModule,
   ],
 })
 export class AppModule implements NestModule {

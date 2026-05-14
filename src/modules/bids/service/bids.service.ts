@@ -16,6 +16,10 @@ import { CreateBidDto } from '../dto/create-bid.dto';
 import { BidEntity } from '../entities/bid.entity';
 import { BidsRepository } from '../repo/bids.repository';
 import { TasksRepository } from '../../tasks/repo/tasks.repository';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import { DomainEventsService } from '../../notifications/service/domain-events.service';
+import { NotificationEventType } from '../../notifications/constants/event-types';
 
 @Injectable()
 export class BidsService {
@@ -23,6 +27,9 @@ export class BidsService {
     private readonly bidsRepository: BidsRepository,
     private readonly tasksRepository: TasksRepository,
     private readonly usersService: UsersService,
+    private readonly domainEventsService: DomainEventsService,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async createBid(taskId: string, dto: CreateBidDto, authUser: AuthUser): Promise<BidEntity> {
@@ -66,14 +73,33 @@ export class BidsService {
       });
     }
 
-    const bid = this.bidsRepository.create({
-      taskId,
-      contractorId: authUser.sub,
-      comment: dto.comment ?? null,
-      status: BidStatus.PENDING,
-    });
+    return this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(BidEntity);
+      const bid = repository.create({
+        taskId,
+        contractorId: authUser.sub,
+        comment: dto.comment ?? null,
+        status: BidStatus.PENDING,
+      });
 
-    return this.bidsRepository.save(bid);
+      const savedBid = await repository.save(bid);
+      await this.domainEventsService.appendEvent({
+        manager,
+        eventType: NotificationEventType.BidCreated,
+        aggregateType: 'bid',
+        aggregateId: savedBid.id,
+        initiatorUserId: authUser.sub,
+        payload: {
+          bidId: savedBid.id,
+          taskId,
+          contractorId: authUser.sub,
+          customerId: task.customerId,
+          comment: savedBid.comment,
+        },
+      });
+
+      return savedBid;
+    });
   }
 
   async listTaskBids(taskId: string, authUser: AuthUser, query: PaginationQueryDto): Promise<PaginatedResponseDto<BidEntity>> {

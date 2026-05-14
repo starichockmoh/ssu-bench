@@ -64,7 +64,66 @@ components:
       properties:
         comment:
           type: string
+    PublishTestEventRequest:
+      type: object
+      required: [eventType, aggregateType, aggregateId, payload]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+        aggregateType:
+          type: string
+        aggregateId:
+          type: string
+          format: uuid
+        initiatorUserId:
+          type: string
+          format: uuid
+          nullable: true
+        payload:
+          type: object
+          additionalProperties: true
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        app:
+          type: boolean
+        database:
+          type: boolean
+        kafka:
+          type: boolean
+        notificationsPipelineEnabled:
+          type: boolean
+    PaginatedResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
 paths:
+  /health:
+    get:
+      summary: Healthcheck for app, PostgreSQL and Kafka
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
   /auth/register:
     post:
       summary: Register user
@@ -320,3 +379,215 @@ paths:
       responses:
         '200':
           description: Payment details
+  /technical/events:
+    get:
+      security:
+        - bearerAuth: []
+      summary: List incoming notification pipeline events
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: eventId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: eventType
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Incoming events list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+  /technical/notifications:
+    get:
+      security:
+        - bearerAuth: []
+      summary: List notifications
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: recipientUserId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: channel
+          schema:
+            type: string
+            enum: [internal, email]
+        - in: query
+          name: notificationType
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, sent, failed, suppressed]
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Notifications list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+  /technical/deliveries:
+    get:
+      security:
+        - bearerAuth: []
+      summary: List notification delivery attempts
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: notificationId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [success, retry, failed, suppressed]
+        - in: query
+          name: provider
+          schema:
+            type: string
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Delivery attempts list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+  /technical/dlq:
+    get:
+      security:
+        - bearerAuth: []
+      summary: List DLQ records
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: reasonCode
+          schema:
+            type: string
+        - in: query
+          name: messageType
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [open, replayed]
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: DLQ records list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+  /technical/events/test:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Publish test event into notifications pipeline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishTestEventRequest'
+      responses:
+        '201':
+          description: Test event published
+  /technical/dlq/{id}/replay:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Replay DLQ record back to the main pipeline
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: DLQ record replayed

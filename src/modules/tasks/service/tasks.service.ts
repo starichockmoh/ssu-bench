@@ -21,6 +21,8 @@ import { CreateTaskDto } from '../dto/create-task.dto';
 import { UpdateTaskDto } from '../dto/update-task.dto';
 import { TaskEntity } from '../entities/task.entity';
 import { TasksRepository } from '../repo/tasks.repository';
+import { DomainEventsService } from '../../notifications/service/domain-events.service';
+import { NotificationEventType } from '../../notifications/constants/event-types';
 
 @Injectable()
 export class TasksService {
@@ -33,6 +35,7 @@ export class TasksService {
     private readonly usersRepository: Repository<UserEntity>,
     @InjectRepository(PaymentEntity)
     private readonly paymentsRepository: Repository<PaymentEntity>,
+    private readonly domainEventsService: DomainEventsService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
@@ -42,14 +45,32 @@ export class TasksService {
     const customer = await this.usersService.getByIdOrFail(authUser.sub);
     this.usersService.ensureNotBlocked(customer);
 
-    const task = this.tasksRepository.create({
-      ...dto,
-      customerId: customer.id,
-      status: TaskStatus.DRAFT,
-      selectedBidId: null,
-    });
+    return this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(TaskEntity);
+      const task = repository.create({
+        ...dto,
+        customerId: customer.id,
+        status: TaskStatus.DRAFT,
+        selectedBidId: null,
+      });
 
-    return this.tasksRepository.save(task);
+      const savedTask = await repository.save(task);
+      await this.domainEventsService.appendEvent({
+        manager,
+        eventType: NotificationEventType.TaskCreated,
+        aggregateType: 'task',
+        aggregateId: savedTask.id,
+        initiatorUserId: authUser.sub,
+        payload: {
+          taskId: savedTask.id,
+          customerId: customer.id,
+          title: savedTask.title,
+          price: savedTask.price,
+        },
+      });
+
+      return savedTask;
+    });
   }
 
   async listTasks(query: PaginationQueryDto): Promise<PaginatedResponseDto<TaskEntity>> {
@@ -124,8 +145,26 @@ export class TasksService {
     const contractor = await this.usersService.getByIdOrFail(bid.contractorId);
     this.usersService.ensureNotBlocked(contractor);
 
-    task.status = TaskStatus.COMPLETED_BY_CONTRACTOR;
-    return this.tasksRepository.save(task);
+    return this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(TaskEntity);
+      task.status = TaskStatus.COMPLETED_BY_CONTRACTOR;
+      const savedTask = await repository.save(task);
+      await this.domainEventsService.appendEvent({
+        manager,
+        eventType: NotificationEventType.TaskCompletedByContractor,
+        aggregateType: 'task',
+        aggregateId: savedTask.id,
+        initiatorUserId: authUser.sub,
+        payload: {
+          taskId: savedTask.id,
+          customerId: savedTask.customerId,
+          contractorId: bid.contractorId,
+          title: savedTask.title,
+        },
+      });
+
+      return savedTask;
+    });
   }
 
   async confirmTask(id: string, authUser: AuthUser): Promise<TaskEntity> {
@@ -215,9 +254,37 @@ export class TasksService {
           amount: task.price,
         }),
       );
-      await taskRepository.save(task);
+      const savedTask = await taskRepository.save(task);
 
-      return task;
+      await this.domainEventsService.appendEvent({
+        manager,
+        eventType: NotificationEventType.TaskConfirmed,
+        aggregateType: 'task',
+        aggregateId: savedTask.id,
+        initiatorUserId: authUser.sub,
+        payload: {
+          taskId: savedTask.id,
+          customerId: customer.id,
+          contractorId: contractor.id,
+          title: savedTask.title,
+          amount: task.price,
+        },
+      });
+      await this.domainEventsService.appendEvent({
+        manager,
+        eventType: NotificationEventType.PaymentCompleted,
+        aggregateType: 'payment',
+        aggregateId: savedTask.id,
+        initiatorUserId: authUser.sub,
+        payload: {
+          taskId: savedTask.id,
+          customerId: customer.id,
+          contractorId: contractor.id,
+          amount: task.price,
+        },
+      });
+
+      return savedTask;
     });
   }
 
@@ -254,6 +321,20 @@ export class TasksService {
       task.selectedBidId = bid.id;
       task.status = TaskStatus.IN_PROGRESS;
       await taskRepo.save(task);
+      await this.domainEventsService.appendEvent({
+        manager,
+        eventType: NotificationEventType.BidSelected,
+        aggregateType: 'task',
+        aggregateId: task.id,
+        initiatorUserId: authUser.sub,
+        payload: {
+          taskId: task.id,
+          bidId: bid.id,
+          contractorId: bid.contractorId,
+          customerId: task.customerId,
+          title: task.title,
+        },
+      });
     });
 
     return this.getTaskOrFail(taskId);

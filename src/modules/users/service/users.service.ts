@@ -12,10 +12,19 @@ import { getPagination } from '../../../common/utils/pagination';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { UserEntity } from '../entities/user.entity';
 import { UsersRepository } from '../repo/users.repository';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import { DomainEventsService } from '../../notifications/service/domain-events.service';
+import { NotificationEventType } from '../../notifications/constants/event-types';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  constructor(
+    private readonly usersRepository: UsersRepository,
+    private readonly domainEventsService: DomainEventsService,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
+  ) {}
 
   async createUser(dto: CreateUserDto): Promise<UserEntity> {
     const existing = await this.usersRepository.findByEmail(dto.email);
@@ -60,8 +69,24 @@ export class UsersService {
 
   async blockUser(id: string): Promise<UserEntity> {
     const user = await this.getByIdOrFail(id);
-    user.isBlocked = true;
-    return this.usersRepository.save(user);
+    return this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(UserEntity);
+      user.isBlocked = true;
+      const savedUser = await repository.save(user);
+      await this.domainEventsService.appendEvent({
+        manager,
+        eventType: NotificationEventType.UserBlocked,
+        aggregateType: 'user',
+        aggregateId: savedUser.id,
+        initiatorUserId: null,
+        payload: {
+          userId: savedUser.id,
+          email: savedUser.email,
+        },
+      });
+
+      return savedUser;
+    });
   }
 
   async unblockUser(id: string): Promise<UserEntity> {

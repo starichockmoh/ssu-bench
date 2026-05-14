@@ -8,6 +8,7 @@ REST API платформа для размещения заданий, откл
 - NestJS
 - TypeORM
 - PostgreSQL
+- Kafka
 - Docker Compose
 - JWT
 - bcrypt
@@ -26,10 +27,10 @@ npm install
 cp .env.example .env
 ```
 
-3. Запуск БД:
+3. Запуск инфраструктуры:
 
 ```bash
-make up-db
+make up-infra
 ```
 
 
@@ -53,11 +54,19 @@ npm run start:dev
 make up-db
 ```
 
+Запуск базы и Kafka:
+
+```bash
+make up-infra
+```
+
 Запуск базы и backend:
 
 ```bash
 make up
 ```
+
+Swagger UI с `openapi.yaml` будет доступен отдельно на `http://localhost:${DOCS_PORT}`.
 
 Остановка:
 
@@ -78,9 +87,13 @@ make down-clean
 См. `.env.example`.
 
 - `PORT` — порт приложения
+- `DOCS_PORT` — порт отдельного контейнера с документацией Swagger UI
 - `JWT_SECRET` — секрет для JWT
 - `JWT_EXPIRES_IN` — время жизни токена
 - `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME` — подключение к Postgres
+- `KAFKA_BROKERS`, `KAFKA_CLIENT_ID` — подключение к Kafka
+- `KAFKA_TOPIC_*`, `KAFKA_CONSUMER_GROUP_*` — топики и consumer groups сервиса уведомлений
+- `NOTIFICATIONS_PIPELINE_ENABLED`, `OUTBOX_POLL_INTERVAL_MS`, `NOTIFICATIONS_RETRY_DELAY_*`, `NOTIFICATIONS_RATE_LIMIT_WINDOW_SECONDS` — настройки пайплайна уведомлений
 - `HTTP_KEEP_ALIVE_TIMEOUT`, `HTTP_HEADERS_TIMEOUT`, `HTTP_REQUEST_TIMEOUT` — таймауты HTTP-сервера
 
 ## Прочие команды
@@ -109,6 +122,18 @@ npm run migration:revert
 ```bash
 npm run migration:generate
 ```
+
+## Технические ручки уведомлений
+
+- `GET /health` — healthcheck приложения, PostgreSQL и Kafka
+- `GET /technical/events` — входные события пайплайна
+- `GET /technical/notifications` — созданные уведомления
+- `GET /technical/deliveries` — попытки доставки
+- `GET /technical/dlq` — записи DLQ
+- `POST /technical/events/test` — публикация тестового события
+- `POST /technical/dlq/:id/replay` — повторная отправка записи из DLQ
+
+Технические ручки доступны только `admin`-пользователю с JWT.
 
 ## Примеры curl
 
@@ -256,25 +281,147 @@ curl -X GET "$BASE_URL/users" \
   -H "Authorization: Bearer $CUSTOMER_TOKEN"
 ```
 
+Тестовое событие уведомлений и успешная обработка:
+
+```bash
+export TEST_EVENT_ID=$(node -e "console.log(require('crypto').randomUUID())")
+
+curl -s -X POST "$BASE_URL/technical/events/test" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d "{
+    \"eventId\": \"$TEST_EVENT_ID\",
+    \"eventType\": \"technical.test\",
+    \"aggregateType\": \"technical_event\",
+    \"aggregateId\": \"$TASK_ID\",
+    \"initiatorUserId\": null,
+    \"payload\": {
+      \"recipientUserId\": \"$(curl -s -X GET "$BASE_URL/users/me" -H "Authorization: Bearer $ADMIN_TOKEN" | node -pe "JSON.parse(fs.readFileSync(0, 'utf8')).id")\",
+      \"message\": \"Smoke test notification\"
+    }
+  }"
+
+sleep 2
+
+curl -s -X GET "$BASE_URL/technical/events?eventId=$TEST_EVENT_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+curl -s -X GET "$BASE_URL/technical/notifications?notificationType=technical.test" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Ожидаемо:
+
+- в `/technical/events` появится запись со статусом `processed`
+- в `/technical/notifications` появятся уведомления `internal` и `email`
+
+Проверка дедупликации по `eventId`:
+
+```bash
+export BEFORE_COUNT=$(curl -s -X GET "$BASE_URL/technical/notifications?notificationType=technical.test" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | node -pe "JSON.parse(fs.readFileSync(0, 'utf8')).total")
+
+curl -s -X POST "$BASE_URL/technical/events/test" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d "{
+    \"eventId\": \"$TEST_EVENT_ID\",
+    \"eventType\": \"technical.test\",
+    \"aggregateType\": \"technical_event\",
+    \"aggregateId\": \"$TASK_ID\",
+    \"initiatorUserId\": null,
+    \"payload\": {
+      \"recipientUserId\": \"$(curl -s -X GET "$BASE_URL/users/me" -H "Authorization: Bearer $ADMIN_TOKEN" | node -pe "JSON.parse(fs.readFileSync(0, 'utf8')).id")\",
+      \"message\": \"Duplicate event\"
+    }
+  }"
+
+sleep 2
+
+export AFTER_COUNT=$(curl -s -X GET "$BASE_URL/technical/notifications?notificationType=technical.test" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | node -pe "JSON.parse(fs.readFileSync(0, 'utf8')).total")
+
+echo "before=$BEFORE_COUNT after=$AFTER_COUNT"
+```
+
+Ожидаемо:
+
+- значение `before` и `after` одинаковое
+- новые записи в `notifications` не появляются, потому что событие с тем же `eventId` игнорируется как дубликат
+
+Создание битого события и проверка `DLQ`:
+
+```bash
+export BROKEN_EVENT_ID=$(node -e "console.log(require('crypto').randomUUID())")
+
+curl -s -X POST "$BASE_URL/technical/events/test" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d "{
+    \"eventId\": \"$BROKEN_EVENT_ID\",
+    \"eventType\": \"technical.test\",
+    \"aggregateType\": \"technical_event\",
+    \"aggregateId\": \"$TASK_ID\",
+    \"initiatorUserId\": null,
+    \"payload\": {
+      \"recipientUserId\": \"00000000-0000-0000-0000-000000000000\",
+      \"message\": \"Broken event\"
+    }
+  }"
+
+sleep 2
+
+curl -s -X GET "$BASE_URL/technical/dlq?messageType=technical.test" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Ожидаемо:
+
+- в `DLQ` появится запись с `reasonCode=EVENT_PROCESSING_FAILED`
+- причина в том, что `recipientUserId` не существует, и сервис маршрутизации не может построить команды уведомлений
+
+Replay события из `DLQ` обратно в pipeline:
+
+```bash
+curl -s -X POST "$BASE_URL/technical/events/test" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d "{
+    \"eventId\": \"$(node -e "console.log(require('crypto').randomUUID())")\",
+    \"eventType\": \"technical.test\",
+    \"aggregateType\": \"technical_event\",
+    \"aggregateId\": \"$TASK_ID\",
+    \"initiatorUserId\": null,
+    \"payload\": {
+      \"recipientUserId\": \"00000000-0000-0000-0000-000000000000\",
+      \"message\": \"Replay from DLQ test\"
+    }
+  }"
+
+sleep 2
+
+export DLQ_ID=$(curl -s -X GET "$BASE_URL/technical/dlq?messageType=technical.test" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | node -pe "JSON.parse(fs.readFileSync(0, 'utf8')).items[0].id")
+
+curl -s -X POST "$BASE_URL/technical/dlq/$DLQ_ID/replay" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+sleep 2
+
+curl -s -X GET "$BASE_URL/technical/dlq" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+curl -s -X GET "$BASE_URL/technical/events" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Ожидаемо:
+
+- у выбранной записи в `DLQ` статус изменится на `replayed`
+- сообщение снова уйдёт в основной pipeline
+- если причина не устранена, событие снова попадёт в `DLQ`
+- если перед replay исправить причину ошибки, сообщение сможет пройти обработку успешно
+
 ## OpenAPI
 
-Описание API находится в файле `openapi.yaml`.
-
-Развернуть локально (windows):
-```bash
-docker run -p 8080:8080 `
-  -v "${PWD}/openapi.yaml:/var/specs/openapi.yaml" `
-  -e SWAGGER_JSON=/var/specs/openapi.yaml `
-  swaggerapi/swagger-ui
-
-```
-
-Развернуть локально (Linux):
-```bash
-docker run -p 8080:8080 \
-  -v "$(pwd)/openapi.yaml:/var/specs/openapi.yaml" \
-  -e SWAGGER_JSON=/var/specs/openapi.yaml \
-  swaggerapi/swagger-ui
-```
-
-После чего swagger будет доступен на http://localhost:8080
+Описание API находится в файле `openapi.yaml`. Сервис документации запускается на 8081 порту.

@@ -17,15 +17,31 @@ describe('BidsService', () => {
     getByIdOrFail: jest.fn(),
     ensureNotBlocked: jest.fn(),
   };
+  const domainEventsService = {
+    appendEvent: jest.fn(),
+  };
+  const dataSource = {
+    transaction: jest.fn(),
+  };
 
   let service: BidsService;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    dataSource.transaction.mockImplementation((callback: (manager: unknown) => unknown) =>
+      callback({
+        getRepository: jest.fn().mockReturnValue({
+          create: jest.fn().mockImplementation((value) => value),
+          save: jest.fn().mockImplementation(async (value) => ({ id: 'bid-created', ...value })),
+        }),
+      }),
+    );
     service = new BidsService(
       bidsRepository as never,
       tasksRepository as never,
       usersService as never,
+      domainEventsService as never,
+      dataSource as never,
     );
   });
 
